@@ -8,4 +8,4 @@ Becasue all ECS agents require SSM agent they can be started/stopped by calling 
 Example: A distributed, multi-cluster, real time stock trading applicatoin only runs durring US market hours, 9:30am to 4pm Eastern. Scheduled rules can be used to start and stop the entire distrbuted system only when it needs to be running.
 
 Start Step Function
-!(Start_Step_Function_DesignMode.png)
+![](Start_Step_Function_DesignMode.png)
