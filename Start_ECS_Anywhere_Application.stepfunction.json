@@ -1,0 +1,121 @@
+{
+  "Comment": "Start all ECS Anywhere agents and services that control them.",
+  "StartAt": "Get Instance Ids",
+  "States": {
+    "Get Instance Ids": {
+      "Type": "Task",
+      "Next": "Start ECS Agent",
+      "Parameters": {},
+      "Resource": "arn:aws:states:::aws-sdk:ssm:describeInstanceInformation",
+      "ResultSelector": {
+        "InstanceIds.$": "$.InstanceInformationList.*.InstanceId"
+      }
+    },
+    "Start ECS Agent": {
+      "Type": "Task",
+      "Parameters": {
+        "DocumentName": "Start_ECS_Agent",
+        "InstanceIds.$": "$.InstanceIds"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:ssm:sendCommand",
+      "Next": "ListClusters"
+    },
+    "ListClusters": {
+      "Type": "Task",
+      "Next": "For Each Cluster",
+      "Parameters": {},
+      "Resource": "arn:aws:states:::aws-sdk:ecs:listClusters"
+    },
+    "For Each Cluster": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "ListServices",
+        "States": {
+          "ListServices": {
+            "Type": "Task",
+            "Parameters": {
+              "Cluster.$": "$"
+            },
+            "Resource": "arn:aws:states:::aws-sdk:ecs:listServices",
+            "Next": "For Each Service"
+          },
+          "For Each Service": {
+            "Type": "Map",
+            "ItemProcessor": {
+              "ProcessorConfig": {
+                "Mode": "INLINE"
+              },
+              "StartAt": "Get Service Description",
+              "States": {
+                "Get Service Description": {
+                  "Type": "Task",
+                  "Parameters": {
+                    "Cluster.$": "States.ArrayGetItem(States.StringSplit($, '/'), 1)",
+                    "Include": [
+                      "TAGS"
+                    ],
+                    "Services.$": "States.Array($)"
+                  },
+                  "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
+                  "OutputPath": "$.Services[0]",
+                  "Next": "If Service Has Tags"
+                },
+                "If Service Has Tags": {
+                  "Type": "Choice",
+                  "Choices": [
+                    {
+                      "Variable": "$.Tags",
+                      "IsPresent": true,
+                      "Next": "For Each Tag"
+                    }
+                  ],
+                  "Default": "No Tags"
+                },
+                "No Tags": {
+                  "Type": "Pass",
+                  "End": true
+                },
+                "For Each Tag": {
+                  "Type": "Map",
+                  "ItemProcessor": {
+                    "ProcessorConfig": {
+                      "Mode": "INLINE"
+                    },
+                    "StartAt": "Update Service Desired Count",
+                    "States": {
+                      "Update Service Desired Count": {
+                        "Type": "Task",
+                        "End": true,
+                        "Parameters": {
+                          "Service.$": "$.ServiceArn",
+                          "Cluster.$": "$.ClusterArn",
+                          "DesiredCount.$": "States.StringToJson($.DesiredCount)",
+                          "ForceNewDeployment": true
+                        },
+                        "Resource": "arn:aws:states:::aws-sdk:ecs:updateService"
+                      }
+                    }
+                  },
+                  "End": true,
+                  "ItemSelector": {
+                    "DesiredCount.$": "$$.Map.Item.Value.Value",
+                    "ServiceArn.$": "$.ServiceArn",
+                    "ClusterArn.$": "$.ClusterArn"
+                  },
+                  "ItemsPath": "$.Tags"
+                }
+              }
+            },
+            "End": true,
+            "ItemsPath": "$.ServiceArns"
+          }
+        }
+      },
+      "ItemsPath": "$.ClusterArns",
+      "End": true
+    }
+  }
+}
