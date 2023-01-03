@@ -1,0 +1,155 @@
+{
+  "Comment": "Stop services and shut down ECS agents.",
+  "StartAt": "ListClusters",
+  "States": {
+    "ListClusters": {
+      "Type": "Task",
+      "Next": "For Each Cluster",
+      "Parameters": {},
+      "Resource": "arn:aws:states:::aws-sdk:ecs:listClusters"
+    },
+    "For Each Cluster": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "ListServices",
+        "States": {
+          "ListServices": {
+            "Type": "Task",
+            "Parameters": {
+              "Cluster.$": "$"
+            },
+            "Resource": "arn:aws:states:::aws-sdk:ecs:listServices",
+            "Next": "For Each Service"
+          },
+          "For Each Service": {
+            "Type": "Map",
+            "ItemProcessor": {
+              "ProcessorConfig": {
+                "Mode": "INLINE"
+              },
+              "StartAt": "Get Service Description",
+              "States": {
+                "Get Service Description": {
+                  "Type": "Task",
+                  "Parameters": {
+                    "Cluster.$": "States.ArrayGetItem(States.StringSplit($, '/'), 1)",
+                    "Include": [
+                      "TAGS"
+                    ],
+                    "Services.$": "States.Array($)"
+                  },
+                  "Resource": "arn:aws:states:::aws-sdk:ecs:describeServices",
+                  "OutputPath": "$.Services[0]",
+                  "Next": "If Service Has Tags"
+                },
+                "If Service Has Tags": {
+                  "Type": "Choice",
+                  "Choices": [
+                    {
+                      "Variable": "$.Tags",
+                      "IsPresent": true,
+                      "Next": "For Each Tag"
+                    }
+                  ],
+                  "Default": "No Tags"
+                },
+                "No Tags": {
+                  "Type": "Pass",
+                  "End": true
+                },
+                "For Each Tag": {
+                  "Type": "Map",
+                  "ItemProcessor": {
+                    "ProcessorConfig": {
+                      "Mode": "INLINE"
+                    },
+                    "StartAt": "Parallel",
+                    "States": {
+                      "Parallel": {
+                        "Type": "Parallel",
+                        "Branches": [
+                          {
+                            "StartAt": "Stop Service",
+                            "States": {
+                              "Stop Service": {
+                                "Type": "Task",
+                                "Parameters": {
+                                  "Service.$": "$.ServiceArn",
+                                  "Cluster.$": "$.ClusterArn",
+                                  "DesiredCount": 0
+                                },
+                                "Resource": "arn:aws:states:::aws-sdk:ecs:updateService",
+                                "End": true
+                              }
+                            }
+                          },
+                          {
+                            "StartAt": "Set Desired Count Tag",
+                            "States": {
+                              "Set Desired Count Tag": {
+                                "Type": "Task",
+                                "End": true,
+                                "Parameters": {
+                                  "ResourceArn.$": "$.ServiceArn",
+                                  "Tags": [
+                                    {
+                                      "Key": "RunningDesiredInstanceCount",
+                                      "Value.$": "$.DesiredCount"
+                                    }
+                                  ]
+                                },
+                                "Resource": "arn:aws:states:::aws-sdk:ecs:tagResource"
+                              }
+                            }
+                          }
+                        ],
+                        "End": true
+                      }
+                    }
+                  },
+                  "End": true,
+                  "ItemSelector": {
+                    "DesiredCount.$": "$$.Map.Item.Value.Value",
+                    "ServiceArn.$": "$.ServiceArn",
+                    "ClusterArn.$": "$.ClusterArn"
+                  },
+                  "ItemsPath": "$.Tags"
+                }
+              }
+            },
+            "End": true,
+            "ItemsPath": "$.ServiceArns"
+          }
+        }
+      },
+      "ItemsPath": "$.ClusterArns",
+      "Next": "Wait for Services to Drain Tasks"
+    },
+    "Wait for Services to Drain Tasks": {
+      "Type": "Wait",
+      "Seconds": 60,
+      "Next": "Get Instance Ids"
+    },
+    "Get Instance Ids": {
+      "Type": "Task",
+      "Next": "Stop ECS Agent",
+      "Parameters": {},
+      "Resource": "arn:aws:states:::aws-sdk:ssm:describeInstanceInformation",
+      "ResultSelector": {
+        "InstanceIds.$": "$.InstanceInformationList.*.InstanceId"
+      }
+    },
+    "Stop ECS Agent": {
+      "Type": "Task",
+      "Parameters": {
+        "DocumentName": "Stop_ECS_Agent",
+        "InstanceIds.$": "$.InstanceIds"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:ssm:sendCommand",
+      "End": true
+    }
+  }
+}
