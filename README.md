@@ -10,3 +10,7 @@ Example: A distributed, multi-cluster, real time stock trading applicatoin only 
 Start Step Function
 
 ![](Start_Step_Function_DesignMode.png)
+
+Stop Step Function
+
+![](Stop_Step_Function_DesignMode.png)
